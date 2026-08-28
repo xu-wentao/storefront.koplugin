@@ -109,6 +109,9 @@ local Storefront = WidgetContainer:extend{
     name = "storefront",
     is_doc_only = false,
     is_refreshing = false,
+    _opening = false,
+    plugin_status = "idle",
+    _opening_message = nil,
     browser_state = nil,
     browser_menu = nil,
     patch_cache = {},
@@ -10091,13 +10094,68 @@ local function injectStorefrontIntoToolsMenu()
     end
 end
 
+function Storefront:openStorefront()
+    -- Opening the browser can take a noticeable amount of time on slower
+    -- e-ink devices. Show immediate feedback and reject duplicate opens so
+    -- users do not accidentally stack multiple expensive browser builds.
+    if self._opening then
+        UIManager:show(InfoMessage:new{
+            text = _("Storefront is still loading…"),
+            timeout = 2,
+        })
+        return
+    end
+
+    self._opening = true
+    self.plugin_status = "loading"
+
+    local loading = InfoMessage:new{
+        text = _("Storefront") .. "\n\n" .. _("Loading…"),
+        timeout = 0,
+    }
+    self._opening_message = loading
+    UIManager:show(loading)
+
+    -- Especially important on e-ink: make sure the loading marker reaches
+    -- the screen before showBrowser starts its synchronous UI construction.
+    UIManager:forceRePaint()
+
+    UIManager:nextTick(function()
+        local ok, err = pcall(function()
+            self:showBrowser()
+        end)
+
+        if self._opening_message then
+            UIManager:close(self._opening_message)
+            self._opening_message = nil
+        end
+        self._opening = false
+
+        if ok then
+            self.plugin_status = "ready"
+            UIManager:show(InfoMessage:new{
+                text = "● " .. _("Storefront ready"),
+                timeout = 2,
+            })
+        else
+            self.plugin_status = "error"
+            logger.err("Storefront failed to open: " .. tostring(err))
+            StorefrontLogger.warn("Storefront failed to open: " .. tostring(err))
+            UIManager:show(InfoMessage:new{
+                text = "! " .. _("Storefront failed to load") .. "\n" .. tostring(err),
+                timeout = 6,
+            })
+        end
+    end)
+end
+
 function Storefront:addToMainMenu(menu_items)
     injectStorefrontIntoToolsMenu()
     menu_items.Storefront = {
         sorting_hint = "tools",
         text = _("Storefront"),
         callback = function()
-            self:showBrowser()
+            self:openStorefront()
         end,
     }
 end
@@ -10112,9 +10170,7 @@ function Storefront:onDispatcherRegisterActions()
 end
 
 function Storefront:onStorefrontOpen()
-    UIManager:nextTick(function()
-        self:showBrowser()
-    end)
+    self:openStorefront()
     return true
 end
 
