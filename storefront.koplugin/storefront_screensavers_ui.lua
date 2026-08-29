@@ -10,7 +10,15 @@ local StorefrontScreensavers = {}
 local DEFAULT_SCREENSAVER_CATALOG_URLS = {
     "https://raw.githubusercontent.com/ultimatejimmy/storefront-screensavers/main/screensavers.json",
     "https://github.com/ultimatejimmy/storefront-screensavers/raw/refs/heads/main/screensavers.json",
+    "https://cdn.jsdelivr.net/gh/ultimatejimmy/storefront-screensavers@main/screensavers.json",
 }
+
+local function getPluginDir()
+    local source = (debug.getinfo(1, "S").source or ""):gsub("^@", "")
+    return source:match("^(.*[/\\])") or "./"
+end
+
+local BUNDLED_SCREENSAVER_CATALOG_PATH = getPluginDir() .. "screensavers_catalog.json"
 
 local function getHttpModule(url)
     if url and url:match("^https://") then
@@ -26,7 +34,10 @@ local function requestWithRedirects(target_url, sink_fn)
     local max_redirects = 5
     local redirect_count = 0
 
-    while redirect_count < max_redirects do
+    local last_code = 0
+    local last_error
+
+    while redirect_count <= max_redirects do
         local is_https = current_url:match("^https://") ~= nil
         local http_req = getHttpModule(current_url)
         local headers = {
@@ -50,6 +61,10 @@ local function requestWithRedirects(target_url, sink_fn)
         end)
 
         local code = tonumber(res_code) or 0
+        last_code = code
+        if not ok_req then
+            last_error = tostring(res_code)
+        end
         if ok_req and code == 200 then
             return true, 200, response_headers
         elseif ok_req and (code == 301 or code == 302 or code == 303 or code == 307 or code == 308) then
@@ -64,10 +79,79 @@ local function requestWithRedirects(target_url, sink_fn)
             break
         end
     end
-    return false, 0, nil
+    return false, last_code, nil, last_error
+end
+
+local function buildUrlCandidates(target_url)
+    local candidates = {}
+    local seen = {}
+    local function add(url)
+        if url and url ~= "" and not seen[url] then
+            seen[url] = true
+            candidates[#candidates + 1] = url
+        end
+    end
+
+    add(target_url)
+    local owner, repo, branch, path = tostring(target_url or ""):match(
+        "^https://raw%.githubusercontent%.com/([^/]+)/([^/]+)/([^/]+)/(.*)$"
+    )
+    if not owner then
+        owner, repo, branch, path = tostring(target_url or ""):match(
+            "^https://github%.com/([^/]+)/([^/]+)/raw/refs/heads/([^/]+)/(.*)$"
+        )
+    end
+    if owner and repo and branch and path then
+        add(string.format("https://github.com/%s/%s/raw/refs/heads/%s/%s", owner, repo, branch, path))
+        add(string.format("https://raw.githubusercontent.com/%s/%s/%s/%s", owner, repo, branch, path))
+        add(string.format("https://cdn.jsdelivr.net/gh/%s/%s@%s/%s", owner, repo, branch, path))
+    end
+    return candidates
+end
+
+local function requestWithFallbacks(target_url, sink_fn)
+    local last_code = 0
+    local last_error
+    for _, candidate in ipairs(buildUrlCandidates(target_url)) do
+        local ok, code, headers, err = requestWithRedirects(candidate, sink_fn)
+        if ok then
+            return true, code, headers, nil, candidate
+        end
+        last_code = code or last_code
+        last_error = err or last_error
+        logger.warn("Storefront screensaver request failed: " .. candidate .. " (HTTP " .. tostring(code or 0) .. ")")
+    end
+    return false, last_code, nil, last_error
+end
+
+local function isValidImageData(data)
+    if type(data) ~= "string" or #data < 8 then
+        return false
+    end
+    return data:sub(1, 2) == "\255\216"
+        or data:sub(1, 8) == "\137PNG\r\n\26\n"
+        or data:sub(1, 4) == "RIFF"
+        or data:sub(1, 2) == "BM"
 end
 
 local cached_catalog_mem = nil
+
+local function loadCatalogFile(path)
+    local f = io.open(path, "r")
+    if not f then return nil end
+    local content = f:read("*a")
+    f:close()
+    if not content or content == "" then return nil end
+    local ok, parsed = pcall(json.decode, content)
+    if ok and type(parsed) == "table" and #parsed > 0 then
+        return parsed
+    end
+    return nil
+end
+
+function StorefrontScreensavers.getBundledCatalog()
+    return loadCatalogFile(BUNDLED_SCREENSAVER_CATALOG_PATH)
+end
 
 function StorefrontScreensavers.getCachedCatalog()
     if cached_catalog_mem and type(cached_catalog_mem) == "table" and #cached_catalog_mem > 0 then
@@ -79,19 +163,17 @@ function StorefrontScreensavers.getCachedCatalog()
         local ok_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
         if not ok_lfs then ok_lfs, lfs = pcall(require, "lfs") end
         if ok_lfs and lfs and lfs.attributes and lfs.attributes(cat_file, "mode") == "file" then
-            local f = io.open(cat_file, "r")
-            if f then
-                local content = f:read("*a")
-                f:close()
-                if content and content ~= "" then
-                    local ok_j, parsed = pcall(json.decode, content)
-                    if ok_j and type(parsed) == "table" then
-                        cached_catalog_mem = parsed
-                        return parsed
-                    end
-                end
+            local parsed = loadCatalogFile(cat_file)
+            if parsed then
+                cached_catalog_mem = parsed
+                return parsed
             end
         end
+    end
+    local bundled = StorefrontScreensavers.getBundledCatalog()
+    if bundled then
+        cached_catalog_mem = bundled
+        return bundled
     end
     return nil
 end
@@ -149,9 +231,14 @@ function StorefrontScreensavers.fetchCatalog(callback)
         return
     end
 
-    -- Do not pretend a three-item demo list is the complete catalog.
-    -- Returning an empty list lets the caller display the real failure state
-    -- and a later refresh/re-open will retry the network request.
+    local bundled = StorefrontScreensavers.getBundledCatalog()
+    if bundled and #bundled > 0 then
+        cached_catalog_mem = bundled
+        logger.warn("Storefront screensaver catalog network fetch failed; using bundled catalog with " .. tostring(#bundled) .. " items")
+        callback(true, bundled, "bundled")
+        return
+    end
+
     logger.warn("Storefront screensaver catalog unavailable: " .. tostring(last_error))
     callback(false, {}, last_error)
 end
@@ -187,12 +274,18 @@ function StorefrontScreensavers.fetchThumbnail(item, callback)
         return ltn12.sink.table(img_data)
     end
 
-    local ok, code = requestWithRedirects(fetch_url, sink_fn)
+    local ok, code = requestWithFallbacks(fetch_url, sink_fn)
     if ok and code == 200 then
+        local payload = table.concat(img_data)
+        if not isValidImageData(payload) then
+            logger.warn("Storefront screensaver thumbnail returned invalid image data: " .. tostring(fetch_url))
+            item._thumb_failed = true
+            return nil
+        end
         local tmp_path = thumb_path .. ".tmp"
         local file = io.open(tmp_path, "wb")
         if file then
-            file:write(table.concat(img_data))
+            file:write(payload)
             file:close()
             os.remove(thumb_path)
             local ok_ren = os.rename(tmp_path, thumb_path)
@@ -208,6 +301,8 @@ function StorefrontScreensavers.fetchThumbnail(item, callback)
 end
 
 StorefrontScreensavers.requestWithRedirects = requestWithRedirects
+StorefrontScreensavers.requestWithFallbacks = requestWithFallbacks
+StorefrontScreensavers.isValidImageData = isValidImageData
 
 function StorefrontScreensavers.downloadAsSingle(item, callback)
     local StorefrontScreensaverMgr = require("storefront_screensaver_mgr")

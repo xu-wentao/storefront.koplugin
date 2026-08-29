@@ -1,4 +1,4 @@
-name: Publish Storefront Self-Update Test 3
+name: Publish Storefront Screensaver Download Test 4
 
 on:
   push:
@@ -11,6 +11,9 @@ on:
       - 'storefront.koplugin/storefront_about_dialog.lua'
       - 'storefront.koplugin/storefront_match.lua'
       - 'storefront.koplugin/storefront_update_source.lua'
+      - 'storefront.koplugin/storefront_screensaver_mgr.lua'
+      - 'storefront.koplugin/storefront_screensavers_ui.lua'
+      - 'storefront.koplugin/screensavers_catalog.json'
       - 'tests/test_storefront.lua'
   workflow_dispatch:
 
@@ -28,9 +31,10 @@ jobs:
 
       - name: Validate test update source
         run: |
-          grep -q 'version = "26.8.27-beta2-loading-status-test3"' storefront.koplugin/_meta.lua
+          grep -q 'version = "26.8.27-beta2-loading-status-test4"' storefront.koplugin/_meta.lua
           grep -q 'full_name = "xu-wentao/storefront.koplugin"' storefront.koplugin/storefront_update_source.lua
           grep -q 'allow_prerelease = true' storefront.koplugin/storefront_update_source.lua
+          python3 -c 'import json; data=json.load(open("storefront.koplugin/screensavers_catalog.json")); assert len(data) >= 455'
 
       - name: Validate Lua syntax
         run: |
@@ -44,10 +48,10 @@ jobs:
       - name: Package plugin
         run: zip -r storefront.koplugin.zip storefront.koplugin -x '*.git*' '*/.*'
 
-      - name: Publish test3 prerelease
+      - name: Publish test4 prerelease
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: 26.8.27-beta2-loading-status-test3
+          TAG: 26.8.27-beta2-loading-status-test4
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" storefront.koplugin.zip --clobber
@@ -55,7 +59,7 @@ jobs:
           else
             gh release create "$TAG" storefront.koplugin.zip \
               --target "$GITHUB_SHA" \
-              --title 'Storefront loading + self-update test 3' \
-              --notes 'Test build: keeps the loading-state and screensaver catalog fixes, migrates Storefront self-updates to xu-wentao/storefront.koplugin, and includes prerelease releases for the test channel.' \
+              --title 'Storefront screensaver download test 4' \
+              --notes 'Test build: prevents an empty Screensavers tab with a bundled full catalog, retries thumbnail and wallpaper downloads through raw GitHub, GitHub raw, and jsDelivr, validates image payloads, preserves cache fallback, and keeps the fork prerelease self-update channel.' \
               --prerelease
           fi

@@ -12,6 +12,6 @@ end
 return {
     fullname = _("menu_storefront"),
     description = _("menu_storefront_desc"),
-    version = "26.8.27-beta2-loading-status-test3",
+    version = "26.8.27-beta2-loading-status-test4",
     author = "ultimatejimmy",
 }

@@ -7306,13 +7306,10 @@ function Storefront:buildScreensaverEntries(available_list_height, available_lis
     local StorefrontScreensavers = require("storefront_screensavers_ui")
     local ok_ratings, StorefrontRatings = pcall(require, "storefront_ratings")
 
-    -- Fetch catalog (cached after first call)
+    -- Seed immediately from the device cache or the bundled full catalog.
+    -- Do not make the Screensavers tab wait on GitHub before it can render.
     if not self.screensavers_cache then
-        pcall(function()
-            StorefrontScreensavers.fetchCatalog(function(ok, catalog)
-                self.screensavers_cache = catalog
-            end)
-        end)
+        self.screensavers_cache = StorefrontScreensavers.getCachedCatalog() or {}
     end
     local catalog = self.screensavers_cache or {}
 
@@ -8178,6 +8175,31 @@ end
 
 function Storefront:browserRefresh()
     self:ensureBrowserState()
+    if self.browser_state.tab == "Screensavers" then
+        local StorefrontScreensavers = require("storefront_screensavers_ui")
+        local Toast = require("storefront_toast")
+        NetworkMgr:runWhenOnline(function()
+            local progress = Toast.show(_("Refreshing screensaver catalog…"), 0)
+            UIManager:nextTick(function()
+                StorefrontScreensavers.fetchCatalog(function(ok, catalog, source)
+                    if progress and progress.close then progress:close() end
+                    if ok and type(catalog) == "table" and #catalog > 0 then
+                        self.screensavers_cache = catalog
+                        self._filtered_screensavers_cache = nil
+                        self.browser_state.page = 1
+                        self.browser_state.scroll_offset = nil
+                        self:saveBrowserState()
+                        self._browser_refresh_mode_hint = "partial"
+                        self:reopenBrowser()
+                        Toast.show(string.format(_("Loaded %d screensavers (%s)."), #catalog, tostring(source or "catalog")), 3)
+                    else
+                        Toast.show(_("Could not refresh the screensaver catalog."), 4)
+                    end
+                end)
+            end)
+        end)
+        return
+    end
     if self.isRefreshing and self:isRefreshing() then
         local Toast = require("storefront_toast")
         Toast.show(_("Catalog refresh is already in progress in the background."), 3)

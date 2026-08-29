@@ -140,9 +140,29 @@ local function runTests()
     assertTest(font_aliases["gentium plus"] ~= nil, "Alias Exists: Gentium Plus")
 
     -- ----------------------------------------------------
-    -- TEST 5: Test-channel self-update source
+    -- TEST 5: Bundled screensaver catalog
     -- ----------------------------------------------------
-    print("\n--- TEST 5: Storefront Test Update Source ---")
+    print("\n--- TEST 5: Bundled Screensaver Catalog ---")
+    local bundled_file = io.open(script_dir .. "../storefront.koplugin/screensavers_catalog.json", "r")
+    local bundled_raw = bundled_file and bundled_file:read("*a") or nil
+    if bundled_file then bundled_file:close() end
+    local bundled_ok, bundled_screensavers = pcall(function()
+        return require("libs/libkoreader-dkjson").decode(bundled_raw or "")
+    end)
+    assertTest(bundled_ok and type(bundled_screensavers) == "table", "Bundled screensaver catalog parses")
+    assertTest(bundled_screensavers and #bundled_screensavers >= 455, "Bundled screensaver catalog is complete")
+    local invalid_screensavers = 0
+    for _, item in ipairs(bundled_screensavers or {}) do
+        if not item.id or not item.thumbnailUrl or not item.fullUrl then
+            invalid_screensavers = invalid_screensavers + 1
+        end
+    end
+    assertTest(invalid_screensavers == 0, "Bundled screensavers include id, thumbnail, and download URL")
+
+    -- ----------------------------------------------------
+    -- TEST 6: Test-channel self-update source
+    -- ----------------------------------------------------
+    print("\n--- TEST 6: Storefront Test Update Source ---")
     local UpdateSource = require("storefront_update_source")
     local storefront_record = UpdateSource.applyToRecord{
         dirname = "storefront.koplugin",
@@ -163,9 +183,9 @@ local function runTests()
     assertTest(unrelated_record.owner == "example", "Other plugin sources are unchanged")
 
     -- ----------------------------------------------------
-    -- TEST 6: Localization Suite Run
+    -- TEST 7: Localization Suite Run
     -- ----------------------------------------------------
-    print("\n--- TEST 6: Localization Suite ---")
+    print("\n--- TEST 7: Localization Suite ---")
     local ok_loc_suite, loc_err = pcall(dofile, script_dir .. "storefront_localization_test.lua")
     assertTest(ok_loc_suite, "Localization Test Suite Execution", loc_err)
 

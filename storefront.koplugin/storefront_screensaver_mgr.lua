@@ -460,12 +460,18 @@ function StorefrontScreensaverMgr.downloadWallpaper(item, callback)
         return ltn12.sink.table(img_data)
     end
 
-    local ok, code = StorefrontScreensavers.requestWithRedirects(target_url, sink_fn)
+    local ok, code = StorefrontScreensavers.requestWithFallbacks(target_url, sink_fn)
     if ok and code == 200 then
+        local payload = table.concat(img_data)
+        if not StorefrontScreensavers.isValidImageData(payload) then
+            logger.warn("Storefront screensaver download returned invalid image data: " .. tostring(target_url))
+            if callback then callback(false, "Downloaded data is not a supported image") end
+            return nil
+        end
         local tmp_file = filename .. ".tmp"
         local file = io.open(tmp_file, "wb")
         if file then
-            file:write(table.concat(img_data))
+            file:write(payload)
             file:close()
             os.remove(filename)
             local ok_ren = os.rename(tmp_file, filename)
