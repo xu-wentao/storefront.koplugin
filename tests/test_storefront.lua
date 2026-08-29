@@ -182,6 +182,28 @@ local function runTests()
     UpdateSource.applyToRecord(unrelated_record)
     assertTest(unrelated_record.owner == "example", "Other plugin sources are unchanged")
 
+    local ReleaseFallback = require("storefront_release_fallback")
+    local atom_sample = [[
+<feed>
+  <entry>
+    <id>tag:github.com,2008:Repository/1/26.8.27-beta2-loading-status-test5</id>
+    <updated>2026-08-29T04:00:00Z</updated>
+    <link rel="alternate" href="https://github.com/xu-wentao/storefront.koplugin/releases/tag/26.8.27-beta2-loading-status-test5"/>
+    <title>Storefront API fallback test 5</title>
+    <content type="html">&lt;p&gt;Works without the GitHub API.&lt;/p&gt;</content>
+  </entry>
+</feed>
+]]
+    local fallback_releases, fallback_err = ReleaseFallback.parseAtom(atom_sample)
+    assertTest(fallback_releases and #fallback_releases == 1, "Release Atom fallback parses", fallback_err)
+    local fallback_release = fallback_releases and fallback_releases[1]
+    assertTest(fallback_release and fallback_release.tag_name == "26.8.27-beta2-loading-status-test5", "Atom fallback preserves release tag")
+    assertTest(fallback_release and fallback_release.prerelease == true, "Atom fallback preserves prerelease channel")
+    assertTest(
+        fallback_release and fallback_release.assets[1].browser_download_url == "https://github.com/xu-wentao/storefront.koplugin/releases/download/26.8.27-beta2-loading-status-test5/storefront.koplugin.zip",
+        "Atom fallback builds release asset URL"
+    )
+
     -- ----------------------------------------------------
     -- TEST 7: Localization Suite Run
     -- ----------------------------------------------------

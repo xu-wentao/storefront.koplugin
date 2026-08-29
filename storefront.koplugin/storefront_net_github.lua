@@ -4,6 +4,7 @@ local url = require("socket.url")
 local logger = require("logger")
 local DataStorage = require("datastorage")
 local LuaSettings = require("luasettings")
+local ReleaseFallback = require("storefront_release_fallback")
 local ok_su, socketutil = pcall(require, "socketutil")
 if not ok_su or not socketutil then
     socketutil = {
@@ -176,6 +177,45 @@ local function request(path, query)
     return tonumber(code) or 0, body
 end
 
+local function requestPublicUrl(target, accept)
+    local response_body = {}
+    local headers = {
+        ["Accept"] = accept or "application/octet-stream",
+        ["User-Agent"] = USER_AGENT,
+    }
+    local http_mod = getHttpModule(target)
+    local code
+    socketutil:set_timeout(socketutil.FILE_BLOCK_TIMEOUT, socketutil.FILE_TOTAL_TIMEOUT)
+    pcall(function()
+        _, code = http_mod.request{
+            url = target,
+            headers = headers,
+            sink = newTableSink(response_body),
+        }
+    end)
+    socketutil:reset_timeout()
+    return tonumber(code) or 0, table.concat(response_body)
+end
+
+local function fetchTestChannelAtom(owner, repo)
+    if not ReleaseFallback.isTestSource(owner, repo) then
+        return nil, "not test source"
+    end
+    local target = string.format("https://github.com/%s/%s/releases.atom", owner, repo)
+    local code, body = requestPublicUrl(target, "application/atom+xml")
+    if code ~= 200 then
+        logger.warn("Storefront test release feed error", owner .. "/" .. repo, code)
+        return nil, { code = code, body = body }
+    end
+    local releases, err = ReleaseFallback.parseAtom(body)
+    if not releases then
+        logger.warn("Storefront test release feed decode error", err)
+        return nil, err
+    end
+    logger.info("Storefront test releases loaded from Atom feed", #releases)
+    return releases, nil
+end
+
 local function buildQuery(opts)
     local query_parts = {}
     if opts.q and opts.q ~= "" then
@@ -294,6 +334,12 @@ function GitHubClient.fetchLatestRelease(owner, repo)
     local code, body = request(path)
     if code ~= 200 then
         logger.warn("GitHub fetch latest release error", owner .. "/" .. repo, code, body)
+        local releases = fetchTestChannelAtom(owner, repo)
+        if releases then
+            for _, release in ipairs(releases) do
+                if not release.prerelease then return release, nil end
+            end
+        end
         return nil, { code = code, body = body }
     end
     local ok, parsed = safeJsonDecode(body)
@@ -307,6 +353,10 @@ end
 function GitHubClient.fetchReleaseByTag(owner, repo, tag)
     if not owner or not repo or not tag then
         return nil, "missing parameters"
+    end
+    if ReleaseFallback.isTestSource(owner, repo) then
+        logger.info("Storefront test release asset resolved without GitHub API", tag)
+        return ReleaseFallback.buildRelease(tag), nil
     end
     local path = string.format("/repos/%s/%s/releases/tags/%s", owner, repo, tag)
     local code, body = request(path)
@@ -329,6 +379,11 @@ function GitHubClient.fetchReleases(owner, repo, opts)
     if not owner or not repo then
         return nil, "missing owner/repo"
     end
+    if ReleaseFallback.isTestSource(owner, repo) then
+        local releases, fallback_err = fetchTestChannelAtom(owner, repo)
+        if releases then return releases, nil end
+        logger.warn("Storefront test release feed unavailable; retrying GitHub API", fallback_err)
+    end
     opts = opts or {}
     local per_page = tonumber(opts.per_page) or 100
     local max_pages = tonumber(opts.max_pages) or 5
@@ -341,6 +396,11 @@ function GitHubClient.fetchReleases(owner, repo, opts)
             logger.warn("GitHub fetch releases error", owner .. "/" .. repo, code, body)
             if #results > 0 then
                 return results, nil
+            end
+            local releases, fallback_err = fetchTestChannelAtom(owner, repo)
+            if releases then return releases, nil end
+            if ReleaseFallback.isTestSource(owner, repo) then
+                logger.warn("Storefront test release fallback failed", fallback_err)
             end
             return nil, { code = code, body = body }
         end

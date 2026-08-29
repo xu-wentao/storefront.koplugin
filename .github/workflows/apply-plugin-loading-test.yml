@@ -1,4 +1,4 @@
-name: Publish Storefront Screensaver Download Test 4
+name: Publish Storefront API Fallback Test 5
 
 on:
   push:
@@ -11,6 +11,8 @@ on:
       - 'storefront.koplugin/storefront_about_dialog.lua'
       - 'storefront.koplugin/storefront_match.lua'
       - 'storefront.koplugin/storefront_update_source.lua'
+      - 'storefront.koplugin/storefront_net_github.lua'
+      - 'storefront.koplugin/storefront_release_fallback.lua'
       - 'storefront.koplugin/storefront_screensaver_mgr.lua'
       - 'storefront.koplugin/storefront_screensavers_ui.lua'
       - 'storefront.koplugin/screensavers_catalog.json'
@@ -31,7 +33,7 @@ jobs:
 
       - name: Validate test update source
         run: |
-          grep -q 'version = "26.8.27-beta2-loading-status-test4"' storefront.koplugin/_meta.lua
+          grep -q 'version = "26.8.27-beta2-loading-status-test5"' storefront.koplugin/_meta.lua
           grep -q 'full_name = "xu-wentao/storefront.koplugin"' storefront.koplugin/storefront_update_source.lua
           grep -q 'allow_prerelease = true' storefront.koplugin/storefront_update_source.lua
           python3 -c 'import json; data=json.load(open("storefront.koplugin/screensavers_catalog.json")); assert len(data) >= 455'
@@ -48,10 +50,10 @@ jobs:
       - name: Package plugin
         run: zip -r storefront.koplugin.zip storefront.koplugin -x '*.git*' '*/.*'
 
-      - name: Publish test4 prerelease
+      - name: Publish test5 prerelease
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: 26.8.27-beta2-loading-status-test4
+          TAG: 26.8.27-beta2-loading-status-test5
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" storefront.koplugin.zip --clobber
@@ -59,7 +61,7 @@ jobs:
           else
             gh release create "$TAG" storefront.koplugin.zip \
               --target "$GITHUB_SHA" \
-              --title 'Storefront screensaver download test 4' \
-              --notes 'Test build: prevents an empty Screensavers tab with a bundled full catalog, retries thumbnail and wallpaper downloads through raw GitHub, GitHub raw, and jsDelivr, validates image payloads, preserves cache fallback, and keeps the fork prerelease self-update channel.' \
+              --title 'Storefront API fallback test 5' \
+              --notes 'Test build: falls back to the public GitHub Releases Atom feed when api.github.com is unavailable, reconstructs the Storefront ZIP asset URL for installation, keeps prerelease updates enabled, and includes the screensaver catalog and download fixes from test4.' \
               --prerelease
           fi
