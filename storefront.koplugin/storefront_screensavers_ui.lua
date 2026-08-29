@@ -7,7 +7,10 @@ local _ = function(key, ...) return Localization:t(key, ...) end
 
 local StorefrontScreensavers = {}
 
-local DEFAULT_SCREENSAVER_CATALOG_URL = "https://raw.githubusercontent.com/ultimatejimmy/storefront-screensavers/main/screensavers.json"
+local DEFAULT_SCREENSAVER_CATALOG_URLS = {
+    "https://raw.githubusercontent.com/ultimatejimmy/storefront-screensavers/main/screensavers.json",
+    "https://github.com/ultimatejimmy/storefront-screensavers/raw/refs/heads/main/screensavers.json",
+}
 
 local function getHttpModule(url)
     if url and url:match("^https://") then
@@ -95,65 +98,62 @@ end
 
 function StorefrontScreensavers.fetchCatalog(callback)
     local ltn12 = require("ltn12")
-    local response_body = {}
-    local sink_fn = function()
-        response_body = {}
-        return ltn12.sink.table(response_body)
-    end
+    local last_error = "unknown error"
 
-    local ok, code = requestWithRedirects(DEFAULT_SCREENSAVER_CATALOG_URL, sink_fn)
-    if ok and code == 200 then
-        local body_str = table.concat(response_body)
-        local parsed_ok, data = pcall(json.decode, body_str)
-        if parsed_ok and type(data) == "table" then
-            cached_catalog_mem = data
-            pcall(function()
-                local ok_ds, DataStorage = pcall(require, "datastorage")
-                if ok_ds and DataStorage and DataStorage.getDataDir then
-                    local cat_file = DataStorage:getDataDir() .. "/cache/storefront_screensavers_catalog.json"
-                    local f = io.open(cat_file, "w")
-                    if f then
-                        f:write(body_str)
-                        f:close()
+    for _, catalog_url in ipairs(DEFAULT_SCREENSAVER_CATALOG_URLS) do
+        local response_body = {}
+        local sink_fn = function()
+            response_body = {}
+            return ltn12.sink.table(response_body)
+        end
+
+        local ok, code = requestWithRedirects(catalog_url, sink_fn)
+        if ok and code == 200 then
+            local body_str = table.concat(response_body)
+            local parsed_ok, data = pcall(json.decode, body_str)
+            if parsed_ok and type(data) == "table" and #data > 0 then
+                cached_catalog_mem = data
+                pcall(function()
+                    local ok_ds, DataStorage = pcall(require, "datastorage")
+                    if ok_ds and DataStorage and DataStorage.getDataDir then
+                        local cache_dir = DataStorage:getDataDir() .. "/cache"
+                        local ok_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
+                        if not ok_lfs then ok_lfs, lfs = pcall(require, "lfs") end
+                        if ok_lfs and lfs and lfs.attributes and not lfs.attributes(cache_dir) then
+                            pcall(function() lfs.mkdir(cache_dir) end)
+                        end
+                        local cat_file = cache_dir .. "/storefront_screensavers_catalog.json"
+                        local f = io.open(cat_file, "w")
+                        if f then
+                            f:write(body_str)
+                            f:close()
+                        end
                     end
-                end
-            end)
-            callback(true, data)
-            return
+                end)
+                logger.info("Storefront screensaver catalog loaded: " .. tostring(#data) .. " items from " .. catalog_url)
+                callback(true, data, "network")
+                return
+            end
+            last_error = "invalid JSON/catalog payload from " .. catalog_url
+            logger.warn("Storefront screensaver catalog parse failed: " .. last_error)
+        else
+            last_error = "HTTP " .. tostring(code or 0) .. " from " .. catalog_url
+            logger.warn("Storefront screensaver catalog fetch failed: " .. last_error)
         end
     end
 
     local local_cached = StorefrontScreensavers.getCachedCatalog()
-    if local_cached then
-        callback(true, local_cached)
+    if local_cached and #local_cached > 0 then
+        logger.warn("Storefront screensaver catalog network fetch failed; using cached catalog with " .. tostring(#local_cached) .. " items")
+        callback(true, local_cached, "cache")
         return
     end
 
-    -- Fallback dummy data if offline / initial test
-    local fallback = {
-        {
-            id = "foggy-forest-pines",
-            title = "Foggy Mountain Pines",
-            author = "Unsplash (CC0)",
-            category = "Nature",
-            fullUrl = "https://raw.githubusercontent.com/ultimatejimmy/storefront-screensavers/main/images/foggy-forest-pines.jpg",
-        },
-        {
-            id = "minimalist-ocean-waves",
-            title = "Minimalist Ocean Horizon",
-            author = "Unsplash (CC0)",
-            category = "Minimalist",
-            fullUrl = "https://raw.githubusercontent.com/ultimatejimmy/storefront-screensavers/main/images/minimalist-ocean-waves.jpg",
-        },
-        {
-            id = "cosmic-nebula-monochrome",
-            title = "Deep Space Nebula",
-            author = "Unsplash (CC0)",
-            category = "Sci-Fi",
-            fullUrl = "https://raw.githubusercontent.com/ultimatejimmy/storefront-screensavers/main/images/cosmic-nebula-monochrome.jpg",
-        },
-    }
-    callback(false, fallback)
+    -- Do not pretend a three-item demo list is the complete catalog.
+    -- Returning an empty list lets the caller display the real failure state
+    -- and a later refresh/re-open will retry the network request.
+    logger.warn("Storefront screensaver catalog unavailable: " .. tostring(last_error))
+    callback(false, {}, last_error)
 end
 
 function StorefrontScreensavers.fetchThumbnail(item, callback)
