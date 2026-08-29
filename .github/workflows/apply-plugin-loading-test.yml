@@ -1,4 +1,4 @@
-name: Build Storefront Loading State Test
+name: Publish Storefront Loading State Test
 
 on:
   push:
@@ -12,83 +12,17 @@ permissions:
   contents: write
 
 jobs:
-  patch-test-release:
+  publish-release:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout test branch
-        uses: actions/checkout@v4
-        with:
-          ref: test/plugin-loading-status
-          fetch-depth: 0
-
-      - name: Apply loading-state patch
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          main_path = Path('storefront.koplugin/main.lua')
-          text = main_path.read_text()
-
-          state_anchor = '''    is_refreshing = false,\n    browser_state = nil,'''
-          state_replacement = '''    is_refreshing = false,\n    _opening = false,\n    plugin_status = "idle",\n    _opening_message = nil,\n    browser_state = nil,'''
-          if text.count(state_anchor) != 1:
-              raise SystemExit(f'unexpected Storefront state anchor count: {text.count(state_anchor)}')
-          text = text.replace(state_anchor, state_replacement, 1)
-
-          old_entry = '''function Storefront:addToMainMenu(menu_items)\n    injectStorefrontIntoToolsMenu()\n    menu_items.Storefront = {\n        sorting_hint = "tools",\n        text = _("Storefront"),\n        callback = function()\n            self:showBrowser()\n        end,\n    }\nend\n\nfunction Storefront:onDispatcherRegisterActions()\n    Dispatcher:registerAction("storefront_open", {\n        category = "none",\n        event = "StorefrontOpen",\n        title = _("Storefront: Open"),\n        general = true,\n    })\nend\n\nfunction Storefront:onStorefrontOpen()\n    UIManager:nextTick(function()\n        self:showBrowser()\n    end)\n    return true\nend'''
-
-          new_entry = '''function Storefront:openStorefront()\n    -- Opening the browser can take a noticeable amount of time on slower\n    -- e-ink devices. Show immediate feedback and reject duplicate opens so\n    -- users do not accidentally stack multiple expensive browser builds.\n    if self._opening then\n        UIManager:show(InfoMessage:new{\n            text = _("Storefront is still loading…"),\n            timeout = 2,\n        })\n        return\n    end\n\n    self._opening = true\n    self.plugin_status = "loading"\n\n    local loading = InfoMessage:new{\n        text = _("Storefront") .. "\\n\\n" .. _("Loading…"),\n        timeout = 0,\n    }\n    self._opening_message = loading\n    UIManager:show(loading)\n\n    -- Especially important on e-ink: make sure the loading marker reaches\n    -- the screen before showBrowser starts its synchronous UI construction.\n    UIManager:forceRePaint()\n\n    UIManager:nextTick(function()\n        local ok, err = pcall(function()\n            self:showBrowser()\n        end)\n\n        if self._opening_message then\n            UIManager:close(self._opening_message)\n            self._opening_message = nil\n        end\n        self._opening = false\n\n        if ok then\n            self.plugin_status = "ready"\n            UIManager:show(InfoMessage:new{\n                text = "● " .. _("Storefront ready"),\n                timeout = 2,\n            })\n        else\n            self.plugin_status = "error"\n            logger.err("Storefront failed to open: " .. tostring(err))\n            StorefrontLogger.warn("Storefront failed to open: " .. tostring(err))\n            UIManager:show(InfoMessage:new{\n                text = "! " .. _("Storefront failed to load") .. "\\n" .. tostring(err),\n                timeout = 6,\n            })\n        end\n    end)\nend\n\nfunction Storefront:addToMainMenu(menu_items)\n    injectStorefrontIntoToolsMenu()\n    menu_items.Storefront = {\n        sorting_hint = "tools",\n        text = _("Storefront"),\n        callback = function()\n            self:openStorefront()\n        end,\n    }\nend\n\nfunction Storefront:onDispatcherRegisterActions()\n    Dispatcher:registerAction("storefront_open", {\n        category = "none",\n        event = "StorefrontOpen",\n        title = _("Storefront: Open"),\n        general = true,\n    })\nend\n\nfunction Storefront:onStorefrontOpen()\n    self:openStorefront()\n    return true\nend'''
-
-          if text.count(old_entry) != 1:
-              raise SystemExit(f'unexpected menu entry anchor count: {text.count(old_entry)}')
-          text = text.replace(old_entry, new_entry, 1)
-          main_path.write_text(text)
-
-          meta_path = Path('storefront.koplugin/_meta.lua')
-          meta = meta_path.read_text()
-          old_version = 'version = "26.8.27-beta2"'
-          new_version = 'version = "26.8.27-beta2-loading-status-test1"'
-          if meta.count(old_version) != 1:
-              raise SystemExit(f'unexpected version anchor count: {meta.count(old_version)}')
-          meta_path.write_text(meta.replace(old_version, new_version, 1))
-          PY
-
-      - name: Syntax check
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y lua5.1
-          find storefront.koplugin -name '*.lua' -exec luac -p {} +
-
-      - name: Commit patched test build
-        run: |
-          if git diff --quiet -- storefront.koplugin/main.lua storefront.koplugin/_meta.lua; then
-            echo 'Patch already applied; nothing to commit.'
-          else
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add storefront.koplugin/main.lua storefront.koplugin/_meta.lua
-            git commit -s -m 'test: show Storefront loading and ready state'
-            git push origin HEAD:test/plugin-loading-status
-          fi
-
-      - name: Package test plugin
-        run: |
-          rm -f storefront.koplugin.zip
-          zip -r storefront.koplugin.zip storefront.koplugin -x '*.git*' '*/.*'
-
-      - name: Create draft prerelease
+      - name: Publish existing draft prerelease
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: 26.8.27-beta2-loading-status-test1
+          RELEASE_ID: '378624461'
         run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists."
-          else
-            gh release create "$TAG" storefront.koplugin.zip \
-              --target test/plugin-loading-status \
-              --title "Storefront loading status test 1" \
-              --notes "Test build: shows an immediate Loading marker while Storefront opens, blocks duplicate open requests, reports Ready after the browser is built, and reports an Error state if opening fails." \
-              --draft \
-              --prerelease
-          fi
+          gh api \
+            --method PATCH \
+            -H 'Accept: application/vnd.github+json' \
+            "/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+            -f draft=false \
+            -f prerelease=true
