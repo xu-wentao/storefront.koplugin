@@ -1,0 +1,27 @@
+name: Publish Storefront Loading State Test
+
+on:
+  push:
+    branches:
+      - 'test/plugin-loading-status'
+    paths:
+      - '.github/workflows/publish-loading-test.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  publish-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish existing draft prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: '378624461'
+        run: |
+          gh api \
+            --method PATCH \
+            -H 'Accept: application/vnd.github+json' \
+            "/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+            -f draft=false \
+            -f prerelease=true
