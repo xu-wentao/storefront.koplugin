@@ -21,6 +21,7 @@ local Localization = require("localization_storefront")
 local _ = function(key, ...) return Localization:t(key, ...) end
 local storefront_theme = require("storefront_theme")
 local StorefrontToast = require("storefront_toast")
+local StorefrontUpdateSource = require("storefront_update_source")
 
 local StorefrontAboutDialog = {}
 
@@ -61,6 +62,9 @@ local ChannelSettings = LuaSettings:open(SETTINGS_PATH)
 local CHANNEL_KEY = "storefront_update_channel"
 
 function StorefrontAboutDialog.getChannel()
+    if StorefrontUpdateSource.allow_prerelease then
+        return "beta"
+    end
     local val = ChannelSettings:readSetting(CHANNEL_KEY)
     if val == "beta" then
         return "beta"
@@ -89,14 +93,14 @@ function StorefrontAboutDialog.checkForUpdates(Storefront)
         local function doCheckRelease()
             local target_release, err
             if channel == "beta" then
-                local releases, rel_err = GitHub.fetchReleases("ultimatejimmy", "storefront.koplugin")
+                local releases, rel_err = GitHub.fetchReleases(StorefrontUpdateSource.owner, StorefrontUpdateSource.repo)
                 if releases and #releases > 0 then
                     target_release = releases[1]
                 else
                     err = rel_err
                 end
             else
-                target_release, err = GitHub.fetchLatestRelease("ultimatejimmy", "storefront.koplugin")
+                target_release, err = GitHub.fetchLatestRelease(StorefrontUpdateSource.owner, StorefrontUpdateSource.repo)
             end
 
             if target_release and type(target_release) == "table" then
@@ -148,17 +152,16 @@ function StorefrontAboutDialog.checkForUpdates(Storefront)
             local clean_current = current_version:gsub("^[vV]", "")
 
             local Cache = require("storefront_cache")
-            local cached_repo = Cache.getRepoByName("ultimatejimmy", "storefront.koplugin")
-                or Cache.getRepoByName("ultimatejimmy", "storefront")
+            local cached_repo = Cache.getRepoByName(StorefrontUpdateSource.owner, StorefrontUpdateSource.repo)
             local stars_count = (cached_repo and tonumber(cached_repo.stars))
                 or (cached_repo and cached_repo.data and tonumber(cached_repo.data.stargazers_count))
                 or (target_release and (tonumber(target_release.stargazers_count) or tonumber(target_release.stars)))
                 or 0
 
             local repo_desc = cached_repo or {
-                owner = "ultimatejimmy",
-                name = "storefront.koplugin",
-                full_name = "ultimatejimmy/storefront.koplugin",
+                owner = StorefrontUpdateSource.owner,
+                name = StorefrontUpdateSource.repo,
+                full_name = StorefrontUpdateSource.full_name,
                 kind = "plugin",
                 stars = stars_count,
                 description = _("Plugin and patch browser for KOReader."),
@@ -166,9 +169,9 @@ function StorefrontAboutDialog.checkForUpdates(Storefront)
                 tag_name = latest_tag,
                 latest_version = clean_latest,
                 data = {
-                    owner = { login = "ultimatejimmy" },
+                    owner = { login = StorefrontUpdateSource.owner },
                     stargazers_count = stars_count,
-                    default_branch = "main",
+                    default_branch = StorefrontUpdateSource.branch,
                 }
             }
             if not repo_desc.stars or repo_desc.stars == 0 then

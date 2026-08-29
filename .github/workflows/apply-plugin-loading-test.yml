@@ -1,4 +1,4 @@
-name: Build Storefront Screensaver Catalog Test 2
+name: Publish Storefront Self-Update Test 3
 
 on:
   push:
@@ -6,13 +6,19 @@ on:
       - 'test/plugin-loading-status'
     paths:
       - '.github/workflows/apply-plugin-loading-test.yml'
+      - 'storefront.koplugin/_meta.lua'
+      - 'storefront.koplugin/main.lua'
+      - 'storefront.koplugin/storefront_about_dialog.lua'
+      - 'storefront.koplugin/storefront_match.lua'
+      - 'storefront.koplugin/storefront_update_source.lua'
+      - 'tests/test_storefront.lua'
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build-release:
+  test-and-release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,99 +26,11 @@ jobs:
           ref: test/plugin-loading-status
           fetch-depth: 0
 
-      - name: Patch screensaver catalog loading
+      - name: Validate test update source
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path('storefront.koplugin/storefront_screensavers_ui.lua')
-          s = p.read_text()
-
-          old_url = 'local DEFAULT_SCREENSAVER_CATALOG_URL = "https://raw.githubusercontent.com/ultimatejimmy/storefront-screensavers/main/screensavers.json"'
-          new_url = '''local DEFAULT_SCREENSAVER_CATALOG_URLS = {
-              "https://raw.githubusercontent.com/ultimatejimmy/storefront-screensavers/main/screensavers.json",
-              "https://github.com/ultimatejimmy/storefront-screensavers/raw/refs/heads/main/screensavers.json",
-          }'''
-          if s.count(old_url) != 1:
-              raise SystemExit(f'catalog URL anchor count={s.count(old_url)}')
-          s = s.replace(old_url, new_url)
-
-          start = s.index('function StorefrontScreensavers.fetchCatalog(callback)')
-          end = s.index('\nfunction StorefrontScreensavers.fetchThumbnail', start)
-          old = s[start:end]
-          new = '''function StorefrontScreensavers.fetchCatalog(callback)
-              local ltn12 = require("ltn12")
-              local last_error = "unknown error"
-
-              for _, catalog_url in ipairs(DEFAULT_SCREENSAVER_CATALOG_URLS) do
-                  local response_body = {}
-                  local sink_fn = function()
-                      response_body = {}
-                      return ltn12.sink.table(response_body)
-                  end
-
-                  local ok, code = requestWithRedirects(catalog_url, sink_fn)
-                  if ok and code == 200 then
-                      local body_str = table.concat(response_body)
-                      local parsed_ok, data = pcall(json.decode, body_str)
-                      if parsed_ok and type(data) == "table" and #data > 0 then
-                          cached_catalog_mem = data
-                          pcall(function()
-                              local ok_ds, DataStorage = pcall(require, "datastorage")
-                              if ok_ds and DataStorage and DataStorage.getDataDir then
-                                  local cache_dir = DataStorage:getDataDir() .. "/cache"
-                                  local ok_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
-                                  if not ok_lfs then ok_lfs, lfs = pcall(require, "lfs") end
-                                  if ok_lfs and lfs and lfs.attributes and not lfs.attributes(cache_dir) then
-                                      pcall(function() lfs.mkdir(cache_dir) end)
-                                  end
-                                  local cat_file = cache_dir .. "/storefront_screensavers_catalog.json"
-                                  local f = io.open(cat_file, "w")
-                                  if f then
-                                      f:write(body_str)
-                                      f:close()
-                                  end
-                              end
-                          end)
-                          logger.info("Storefront screensaver catalog loaded: " .. tostring(#data) .. " items from " .. catalog_url)
-                          callback(true, data, "network")
-                          return
-                      end
-                      last_error = "invalid JSON/catalog payload from " .. catalog_url
-                      logger.warn("Storefront screensaver catalog parse failed: " .. last_error)
-                  else
-                      last_error = "HTTP " .. tostring(code or 0) .. " from " .. catalog_url
-                      logger.warn("Storefront screensaver catalog fetch failed: " .. last_error)
-                  end
-              end
-
-              local local_cached = StorefrontScreensavers.getCachedCatalog()
-              if local_cached and #local_cached > 0 then
-                  logger.warn("Storefront screensaver catalog network fetch failed; using cached catalog with " .. tostring(#local_cached) .. " items")
-                  callback(true, local_cached, "cache")
-                  return
-              end
-
-              -- Do not pretend a three-item demo list is the complete catalog.
-              -- Returning an empty list lets the caller display the real failure state
-              -- and a later refresh/re-open will retry the network request.
-              logger.warn("Storefront screensaver catalog unavailable: " .. tostring(last_error))
-              callback(false, {}, last_error)
-          end
-          '''
-          s = s[:start] + new + s[end:]
-          p.write_text(s)
-
-          meta = Path('storefront.koplugin/_meta.lua')
-          m = meta.read_text()
-          for prev in ('26.8.27-beta2-loading-status-test1', '26.8.27-beta2'):
-              if prev in m:
-                  m = m.replace(prev, '26.8.27-beta2-loading-status-test2', 1)
-                  break
-          else:
-              raise SystemExit('version anchor not found')
-          meta.write_text(m)
-          PY
+          grep -q 'version = "26.8.27-beta2-loading-status-test3"' storefront.koplugin/_meta.lua
+          grep -q 'full_name = "xu-wentao/storefront.koplugin"' storefront.koplugin/storefront_update_source.lua
+          grep -q 'allow_prerelease = true' storefront.koplugin/storefront_update_source.lua
 
       - name: Validate Lua syntax
         run: |
@@ -123,32 +41,21 @@ jobs:
       - name: Run Storefront tests
         run: lua5.1 tests/test_storefront.lua
 
-      - name: Commit test2 patch
-        run: |
-          if git diff --quiet; then
-            echo 'No patch changes to commit'
-          else
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add storefront.koplugin/storefront_screensavers_ui.lua storefront.koplugin/_meta.lua
-            git commit -s -m 'fix: handle incomplete screensaver catalog loading'
-            git push origin test/plugin-loading-status
-          fi
-
       - name: Package plugin
         run: zip -r storefront.koplugin.zip storefront.koplugin -x '*.git*' '*/.*'
 
-      - name: Publish test2 prerelease
+      - name: Publish test3 prerelease
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: 26.8.27-beta2-loading-status-test2
+          TAG: 26.8.27-beta2-loading-status-test3
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" storefront.koplugin.zip --clobber
+            gh release edit "$TAG" --draft=false --prerelease
           else
             gh release create "$TAG" storefront.koplugin.zip \
-              --target test/plugin-loading-status \
-              --title 'Storefront loading + screensaver catalog test 2' \
-              --notes 'Test build: keeps the loading-state UX, fixes screensaver catalog failure handling, retries through a secondary GitHub URL, preserves a valid cached full catalog, removes the misleading 3-item fallback, and adds catalog diagnostics.' \
+              --target "$GITHUB_SHA" \
+              --title 'Storefront loading + self-update test 3' \
+              --notes 'Test build: keeps the loading-state and screensaver catalog fixes, migrates Storefront self-updates to xu-wentao/storefront.koplugin, and includes prerelease releases for the test channel.' \
               --prerelease
           fi

@@ -3426,6 +3426,8 @@ local function fetchRemoteVersionCore(record)
         return nil, 0, _("Not matched with a repository.")
     end
 
+    require("storefront_update_source").applyToRecord(record)
+
     local owner = record.owner
     local repo_name = record.repo
     local last_err
@@ -9850,6 +9852,14 @@ function Storefront:init()
     StorefrontLogger.info(string.format("Storefront initialized (Mode: %s, Cached plugins: %d)", mode_str, plugin_count or 0))
     Storefront.instance = self
     self.cache_dir = ensureCacheDir()
+
+    -- A test ZIP may inherit an older Storefront install record that still
+    -- points at upstream. Migrate it before any update scan is constructed.
+    local storefront_record = InstallStore.get("storefront.koplugin")
+    if storefront_record then
+        require("storefront_update_source").applyToRecord(storefront_record)
+        InstallStore.upsert("storefront.koplugin", storefront_record)
+    end
     self:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
     

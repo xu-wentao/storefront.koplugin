@@ -2,6 +2,7 @@ local Cache = require("storefront_cache")
 local InstallStore = require("storefront_installs")
 local PluginPaths = require("storefront_plugin_paths")
 local StorefrontUtils = require("storefront_utils")
+local StorefrontUpdateSource = require("storefront_update_source")
 local UIManager = require("ui/uimanager")
 local InfoMessage = require("ui/widget/infomessage")
 local InputDialog = require("ui/widget/inputdialog")
@@ -255,6 +256,7 @@ function Matcher:init(Storefront)
                             installed_tag = existing_rec and existing_rec.installed_tag or nil,
                             tag_name = existing_rec and existing_rec.tag_name or nil,
                         }
+                        StorefrontUpdateSource.applyToRecord(record)
                         InstallStore.upsert(plugin.dirname, record)
                         StorefrontLogger.action(string.format("AUTO-MATCHED plugin %s -> %s", tostring(plugin.dirname), tostring(repo.full_name or repo.name)))
                     end

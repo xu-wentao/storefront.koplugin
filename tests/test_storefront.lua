@@ -140,9 +140,32 @@ local function runTests()
     assertTest(font_aliases["gentium plus"] ~= nil, "Alias Exists: Gentium Plus")
 
     -- ----------------------------------------------------
-    -- TEST 5: Localization Suite Run
+    -- TEST 5: Test-channel self-update source
     -- ----------------------------------------------------
-    print("\n--- TEST 5: Localization Suite ---")
+    print("\n--- TEST 5: Storefront Test Update Source ---")
+    local UpdateSource = require("storefront_update_source")
+    local storefront_record = UpdateSource.applyToRecord{
+        dirname = "storefront.koplugin",
+        owner = "ultimatejimmy",
+        repo = "storefront.koplugin",
+        repo_full_name = "ultimatejimmy/storefront.koplugin",
+        repo_id = 1304319884,
+        branch = "main",
+    }
+    assertTest(storefront_record.owner == "xu-wentao", "Self-update owner uses test fork")
+    assertTest(storefront_record.repo_full_name == "xu-wentao/storefront.koplugin", "Self-update full name uses test fork")
+    assertTest(storefront_record.branch == "test/plugin-loading-status", "Self-update branch uses test branch")
+    assertTest(storefront_record.repo_id == nil, "Upstream repository id is cleared")
+    assertTest(UpdateSource.allow_prerelease == true, "Test source includes prereleases")
+
+    local unrelated_record = { dirname = "example.koplugin", owner = "example" }
+    UpdateSource.applyToRecord(unrelated_record)
+    assertTest(unrelated_record.owner == "example", "Other plugin sources are unchanged")
+
+    -- ----------------------------------------------------
+    -- TEST 6: Localization Suite Run
+    -- ----------------------------------------------------
+    print("\n--- TEST 6: Localization Suite ---")
     local ok_loc_suite, loc_err = pcall(dofile, script_dir .. "storefront_localization_test.lua")
     assertTest(ok_loc_suite, "Localization Test Suite Execution", loc_err)
 
